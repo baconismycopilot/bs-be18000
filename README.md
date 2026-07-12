@@ -36,14 +36,31 @@ call `query_hooks`/`get_nvram` directly with the right name.
 
 ## Install
 
-For development (installs into the project's own `.venv`):
+From PyPI, as a standalone CLI (installs to `~/.local/bin` via `uv tool`, isolated from any
+other project's environment):
+
+```
+uv tool install bs-be18000
+```
+
+Or with `pip`:
+
+```
+pip install bs-be18000
+```
+
+Either way, both the `bs-be18000` command and the `bs_be18000` library are available.
+
+### From source (development)
+
+Installs into the project's own `.venv`:
 
 ```
 uv sync
 ```
 
-To use the `bs-be18000` CLI as a standalone command from anywhere (installs to `~/.local/bin`
-via `uv tool`, in editable mode so it tracks source changes):
+To use the `bs-be18000` CLI as a standalone command from anywhere while tracking local source
+changes (installs to `~/.local/bin` via `uv tool`, in editable mode):
 
 ```
 make install     # or: uv tool install --editable .
