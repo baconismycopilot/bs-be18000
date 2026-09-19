@@ -130,3 +130,36 @@ def test_authentication_failure_reports_clean_error() -> None:
 
     assert result.exit_code != 0
     assert "Login failed" in result.output
+
+
+@respx.mock
+def test_port_and_no_ssl_flags_select_base_url() -> None:
+    base_url = f"http://{HOST}:8080"
+    respx.post(f"{base_url}/get_Nonce.cgi").mock(
+        return_value=httpx.Response(200, json={"nonce": "test-nonce"})
+    )
+    respx.post(f"{base_url}/login_v2.cgi").mock(
+        return_value=httpx.Response(200, headers={"set-cookie": "asus_token=abc123; HttpOnly"})
+    )
+    respx.post(f"{base_url}/Logout.asp").mock(return_value=httpx.Response(200))
+    respx.get(f"{base_url}/appGet.cgi").mock(
+        return_value=httpx.Response(200, json={"productid": "GS-BE18000"})
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [*BASE_ARGS, "--no-ssl", "nvram", "get", "productid"],
+        env={"BS_BE18000_PORT": "8080"},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "productid: GS-BE18000" in result.output
+
+
+def test_ca_cert_must_exist() -> None:
+    result = CliRunner().invoke(
+        cli, [*BASE_ARGS, "--ca-cert", "/nonexistent.pem", "device", "info"]
+    )
+
+    assert result.exit_code != 0
+    assert "/nonexistent.pem" in result.output

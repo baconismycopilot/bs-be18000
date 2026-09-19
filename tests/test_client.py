@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ssl
 from urllib.parse import parse_qs
 
 import httpx
@@ -28,13 +29,13 @@ def _mock_nonce(nonce: str = NONCE) -> respx.Route:
     )
 
 
-def _mock_login_success(token: str = "abc123") -> respx.Route:
+def _mock_login_success(token: str = "abc123", cookie: str = "asus_token") -> respx.Route:
     # A successful login returns the token as a Set-Cookie header, not a JSON body.
     redirect_html = '<HTML><HEAD><meta http-equiv="refresh" content="0; url=GameDashboard.asp">'
     return respx.post(f"{BASE_URL}/login_v2.cgi").mock(
         return_value=httpx.Response(
             200,
-            headers={"set-cookie": f"asus_token={token}; HttpOnly"},
+            headers={"set-cookie": f"{cookie}={token}; HttpOnly"},
             html=redirect_html,
         )
     )
@@ -56,6 +57,21 @@ def test_login_succeeds_with_valid_token(client: RouterClient) -> None:
     _mock_login_success()
 
     client.login()  # must not raise
+
+
+@respx.mock
+def test_login_accepts_https_session_cookie(client: RouterClient) -> None:
+    # Over HTTPS the router names its session cookie asus_s_token rather than asus_token.
+    _mock_nonce()
+    _mock_login_success(cookie="asus_s_token")
+    hook_route = respx.get(f"{BASE_URL}/appGet.cgi").mock(
+        return_value=httpx.Response(200, json={})
+    )
+
+    client.login()
+    client.query_hooks([("nvram_get", "productid")])
+
+    assert hook_route.calls.last.request.headers["cookie"] == "asus_s_token=abc123"
 
 
 @respx.mock
@@ -268,3 +284,44 @@ def test_non_json_response_raises_request_error_with_body_preview(client: Router
 
     with pytest.raises(RequestError, match="Session expired"):
         client.query_hooks([("nvram_get", "productid")])
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("kwargs", "expected_base"),
+    [
+        ({}, f"https://{HOST}:8443"),
+        ({"use_ssl": False}, f"http://{HOST}"),
+        ({"port": 4443}, f"https://{HOST}:4443"),
+    ],
+)
+def test_base_url_port(kwargs: dict[str, object], expected_base: str) -> None:
+    route = respx.post(f"{expected_base}/get_Nonce.cgi").mock(
+        return_value=httpx.Response(200, json={"nonce": NONCE})
+    )
+    respx.post(f"{expected_base}/login_v2.cgi").mock(
+        return_value=httpx.Response(200, headers={"set-cookie": "asus_token=abc123"})
+    )
+
+    RouterClient(HOST, "admin", "hunter2", **kwargs).login()  # type: ignore[arg-type]
+
+    assert route.called
+    # The router rejects a Referer that doesn't match the host exactly (e.g. a redundant ":80").
+    assert route.calls.last.request.headers["referer"] == f"{expected_base}/"
+
+
+def test_ca_cert_builds_verifying_ssl_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Pinning the router's own cert via ca_cert must turn verification on, even though
+    # verify_ssl defaults to False.
+    calls: list[str | None] = []
+    real_create_default_context = ssl.create_default_context
+
+    def fake_create_default_context(*, cafile: str | None = None) -> ssl.SSLContext:
+        calls.append(cafile)
+        return real_create_default_context()
+
+    monkeypatch.setattr(ssl, "create_default_context", fake_create_default_context)
+
+    RouterClient(HOST, "admin", "hunter2", ca_cert="/path/to/router-cert.pem")
+
+    assert calls == ["/path/to/router-cert.pem"]

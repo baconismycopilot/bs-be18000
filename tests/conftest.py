@@ -3,4 +3,4 @@
 from __future__ import annotations
 
 HOST = "192.168.1.1"
-BASE_URL = f"https://{HOST}"
+BASE_URL = f"https://{HOST}:8443"
