@@ -28,7 +28,9 @@ class Connection:
     username: str | None
     password: str | None
     use_ssl: bool
+    port: int | None
     verify_ssl: bool
+    ca_cert: str | None
     as_json: bool
 
 
@@ -41,11 +43,24 @@ class Connection:
     envvar="BS_BE18000_PASSWORD",
     help="Router admin password. Prompted for if not set via flag or $BS_BE18000_PASSWORD.",
 )
-@click.option("--use-ssl/--no-use-ssl", default=True, help="Connect over HTTPS.")
+@click.option("--ssl/--no-ssl", "use_ssl", default=True, help="Connect over HTTPS.")
+@click.option(
+    "-P",
+    "--port",
+    type=int,
+    envvar="BS_BE18000_PORT",
+    help="Router web port (default: 8443 for HTTPS, 80 for HTTP).",
+)
 @click.option(
     "--verify-ssl/--no-verify-ssl",
     default=False,
     help="Verify the router's TLS certificate (routers ship self-signed certs by default).",
+)
+@click.option(
+    "--ca-cert",
+    envvar="BS_BE18000_CA_CERT",
+    type=click.Path(exists=True, dir_okay=False),
+    help="PEM file with the router's certificate (or its root CA) to trust; enables verification.",
 )
 @click.option(
     "--json", "as_json", is_flag=True, help="Print raw JSON instead of formatted output."
@@ -57,11 +72,13 @@ def cli(
     username: str | None,
     password: str | None,
     use_ssl: bool,
+    port: int | None,
     verify_ssl: bool,
+    ca_cert: str | None,
     as_json: bool,
 ) -> None:
     """Query and control an ASUS ROG Strix GS-BE18000 router."""
-    ctx.obj = Connection(host, username, password, use_ssl, verify_ssl, as_json)
+    ctx.obj = Connection(host, username, password, use_ssl, port, verify_ssl, ca_cert, as_json)
 
 
 def _require(value: str | None, message: str) -> str:
@@ -82,7 +99,13 @@ def _router(ctx: click.Context) -> Iterator[RouterClient]:
     password = connection.password or click.prompt("Password", hide_input=True)
     try:
         with RouterClient(
-            host, username, password, use_ssl=connection.use_ssl, verify_ssl=connection.verify_ssl
+            host,
+            username,
+            password,
+            use_ssl=connection.use_ssl,
+            verify_ssl=connection.verify_ssl,
+            ca_cert=connection.ca_cert,
+            port=connection.port,
         ) as router:
             yield router
     except AsusRouterError as exc:

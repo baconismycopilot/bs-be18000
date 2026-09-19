@@ -1,6 +1,6 @@
 [project]
 name = "bs-be18000"
-version = "0.1.0"
+version = "0.2.0"
 description = "API client and CLI for the ASUS ROG Strix GS-BE18000 router"
 readme = "README.md"
 license = "MIT"

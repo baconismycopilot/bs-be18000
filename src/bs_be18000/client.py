@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import ssl
 import string
 from collections.abc import Sequence
 from typing import Any, Self, cast
@@ -22,6 +23,12 @@ from bs_be18000.exceptions import AuthenticationError, RequestError
 from bs_be18000.models import Client, DeviceInfo, WanStatus
 
 DEFAULT_TIMEOUT = 10.0
+# AsusWRT serves LAN HTTPS on its `https_lanport` NVRAM setting (8443 by default), not 443.
+DEFAULT_HTTPS_PORT = 8443
+DEFAULT_HTTP_PORT = 80
+
+# The session cookie is named differently depending on whether the login came over HTTPS.
+_SESSION_COOKIES = ("asus_token", "asus_s_token")
 
 _ALPHANUMERIC = string.ascii_letters + string.digits
 
@@ -51,7 +58,10 @@ class RouterClient:
         with RouterClient("192.168.1.1", "admin", "hunter2") as router:
             print(router.get_device_info())
 
-    Routers ship a self-signed HTTPS certificate, so `verify_ssl` defaults to False.
+    Routers ship a self-signed HTTPS certificate, so `verify_ssl` defaults to False. To verify
+    it properly, pass `ca_cert`: a PEM file holding the router's certificate (or the root CA
+    that issued it), which is then trusted and enforced. `port` defaults to 8443 for HTTPS (the
+    router's default HTTPS LAN port) and 80 for HTTP.
     """
 
     def __init__(
@@ -62,18 +72,28 @@ class RouterClient:
         *,
         use_ssl: bool = True,
         verify_ssl: bool = False,
+        port: int | None = None,
+        ca_cert: str | None = None,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         self._username = username
         self._password = password
         scheme = "https" if use_ssl else "http"
-        base_url = f"{scheme}://{host}"
+        if port is None:
+            port = DEFAULT_HTTPS_PORT if use_ssl else DEFAULT_HTTP_PORT
+        # Omit the scheme's standard port: the router compares Referer against the host
+        # exactly, and rejects the session if it carries a redundant ":80".
+        standard_port = 443 if use_ssl else 80
+        base_url = f"{scheme}://{host}" if port == standard_port else f"{scheme}://{host}:{port}"
+        verify: bool | ssl.SSLContext = verify_ssl
+        if ca_cert is not None:
+            verify = ssl.create_default_context(cafile=ca_cert)
         self._http = httpx.Client(
             base_url=base_url,
             # The router checks Referer as a lightweight CSRF guard on authenticated
             # endpoints, mirroring what its own web UI sends on every request.
             headers={"Referer": f"{base_url}/"},
-            verify=verify_ssl,
+            verify=verify,
             timeout=timeout,
         )
 
@@ -100,7 +120,8 @@ class RouterClient:
         fetch a one-time nonce from `get_Nonce.cgi`, then submit
         `sha256("user:nonce:password:cnonce")` as `login_authorization` to `login_v2.cgi`,
         mirroring what the router's own login page does (see `Main_Login.asp`'s `login()`).
-        On success the token comes back as `Set-Cookie: asus_token=...`, not a JSON body.
+        On success the token comes back as a `Set-Cookie` header, not a JSON body: named
+        `asus_token` over HTTP, but `asus_s_token` over HTTPS.
         """
         request_id = _random_string(10)
         nonce_response = self._post(endpoints.NONCE, json={"id": request_id})
@@ -125,7 +146,7 @@ class RouterClient:
             "login_captcha": "",
         }
         response = self._post(endpoints.LOGIN, payload)
-        if not response.cookies.get("asus_token"):
+        if not any(response.cookies.get(name) for name in _SESSION_COOKIES):
             raise AuthenticationError(f"Login failed for user {self._username!r}")
 
     def logout(self) -> None:

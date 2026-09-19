@@ -12,8 +12,8 @@ to verify the exact request/response shapes):
 - **Login** is a nonce/cnonce challenge, not plain base64(user:pass): `POST get_Nonce.cgi` with
   `{"id": <random>}` to get a `nonce`, then `POST login_v2.cgi` with
   `login_authorization = sha256("user:nonce:password:cnonce")` plus a handful of other form
-  fields. On success the session token comes back as a `Set-Cookie: asus_token=...` header (not
-  a JSON body) — `httpx`'s cookie jar picks this up automatically.
+  fields. On success the session token comes back as a `Set-Cookie` header (not a JSON body),
+  named `asus_token` over HTTP but `asus_s_token` over HTTPS — `httpx`'s cookie jar picks this up automatically.
 - **Reading state** is `GET appGet.cgi?hook=<fn1>(<args1>);<fn2>(<args2>);...` — e.g.
   `nvram_get(productid);nvram_get(firmver);get_clientlist();`. Confirmed working: `nvram_get`
   for NVRAM values and `get_clientlist` for connected devices. Note `nvram_get` only ever takes
@@ -108,6 +108,27 @@ bs-be18000 --json device info   # machine-readable output
 ```
 
 Run `bs-be18000 --help` or `bs-be18000 <command> --help` for the full command tree.
+
+### HTTPS and ports
+
+The CLI connects over HTTPS on port 8443 by default — the router's default HTTPS LAN port (not
+443). Use `--no-ssl` for plain HTTP (port 80), and `--port`/`BS_BE18000_PORT` if your router uses
+a different port. The library takes the same options: `RouterClient(..., use_ssl=True, port=None)`.
+
+The router's certificate is self-signed, so by default it isn't verified. To verify it properly,
+export the router's certificate (PEM), then pass it with `--ca-cert` or `BS_BE18000_CA_CERT`
+(`ca_cert=` in the library). That certificate is then trusted and enforced. Only the certificate
+is needed, never the private key:
+
+```
+export BS_BE18000_CA_CERT=~/.config/bs-be18000/router-cert.pem
+```
+
+The certificate covers the router's LAN IP and `router.asus.com`, so connect using one of those.
+
+If HTTPS connections are refused, the router probably only allows HTTP for LAN access. In its web
+UI, go to Administration → System → Local Access Config, set **Authentication Method** to
+**HTTPS** or **BOTH**, and check that the HTTPS LAN port matches `--port` (8443 by default).
 
 ## Development
 
